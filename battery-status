@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+
+"""
+battery-status - A simple battery status monitor.
+License: BSD 3-Clause
+Copyright (c) 2021, Mauro <mauro@sdf.org>
+All rights reserved.
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+1. Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+3. Neither the name of the copyright holder nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""
+
+import re
+import sys
+import json
+import time
+import sched
+import shlex
+import argparse
+import subprocess as sp
+from typing import Literal
+from pynotifier import Notification
+
+
+BATTERY_STATUS_TITLE = "Low Battery status"
+BATTERY_STATUS_BODY_TMPL = "Currently at {pc} %"
+
+
+def notify_send(title: str, body: str) -> Literal[None]:
+    Notification(title=title, description=body, duration=20, urgency="critical").send()
+
+
+def get_battery() -> float:
+    """ Get the battery percentage. """
+    cmd = shlex.split("acpi -b")
+    cmd = sp.check_output(cmd).decode("utf-8")
+    _, percent = re.findall("battery \d\: (.+), (.*)%", cmd, flags=re.I)[0]
+    return float(percent)
+
+
+def notify_at(sch: sched.scheduler, alert_at: float, every_n: int) -> Literal[None]:
+    battery = get_battery()
+    if battery <= alert_at:
+        notify_send(BATTERY_STATUS_TITLE, BATTERY_STATUS_BODY_TMPL.format(pc=battery))
+
+    sch.enter(every_n, 1, notify_at, (sch, alert_at, every_n))
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-a",
+        "--alert",
+        type=float,
+        default=25,
+        help="Alert at this percent",
+    )
+    parser.add_argument(
+        "-e",
+        "--every",
+        type=int,
+        default=5,
+        help="Alert every n minutes",
+    )
+    args = parser.parse_args()
+
+    sch = sched.scheduler(time.time, time.sleep)
+    every = args.every * 60
+
+    sch.enter(every, 1, notify_at, (sch, args.alert, every))
+    sch.run()
